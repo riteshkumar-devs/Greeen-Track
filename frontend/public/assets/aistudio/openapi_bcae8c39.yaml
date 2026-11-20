@@ -1,0 +1,976 @@
+openapi: 3.1.0
+info:
+  title: GreenTrack API
+  version: 1.0.0
+  description: Shared frontend/backend contract. Backend is authoritative for permissions, QR validation, cooldown, inspection, analytics and route decisions.
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development
+security:
+  - BearerAuth: []
+tags:
+  - name: Health
+  - name: Auth
+  - name: Public
+  - name: Citizen
+  - name: Collector
+  - name: Admin
+  - name: Analytics
+  - name: Routing
+paths:
+  /health:
+    get:
+      tags: [Health]
+      security: []
+      summary: Health check
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Health'}
+  /auth/anonymous-sessions:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Create anonymous citizen session
+      responses:
+        '201':
+          description: Anonymous session issued
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AnonymousSession'}
+  /auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Authenticate registered user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LoginRequest'}
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /me:
+    get:
+      tags: [Auth]
+      summary: Get current user and role
+      responses:
+        '200':
+          description: Current identity
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Me'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /public/bins/resolve:
+    post:
+      tags: [Public]
+      security: []
+      summary: Resolve an opaque bin QR token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ResolveBinRequest'}
+      responses:
+        '200':
+          description: Public bin details
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PublicBin'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /citizen/disposal-events:
+    post:
+      tags: [Citizen]
+      security:
+        - BearerAuth: []
+        - AnonymousSession: []
+      summary: Record citizen disposal interaction
+      description: >
+        Requires Bearer citizen access token OR X-Anonymous-Session. Records an
+        interaction declaration, not proof of physical deposit or correct sorting.
+        Cooldown is enforced by server per actor identity and bin.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, minLength: 8, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDisposalEvent'}
+      responses:
+        '201':
+          description: Interaction accepted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DisposalEvent'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429':
+          description: Five-minute cooldown active
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CooldownError'}
+  /citizen/disposal-events/me:
+    get:
+      tags: [Citizen]
+      summary: Get logged-in citizen's own interaction history
+      responses:
+        '200':
+          description: Interaction history
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DisposalEventList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /collector/tasks:
+    get:
+      tags: [Collector]
+      summary: List tasks assigned to the current collector
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: {$ref: '#/components/schemas/TaskStatus'}
+      responses:
+        '200':
+          description: Assigned tasks
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TaskList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /collector/bins/{bin_id}/inspections:
+    post:
+      tags: [Collector]
+      summary: Submit a physical bin inspection
+      parameters:
+        - $ref: '#/components/parameters/BinId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateInspection'}
+      responses:
+        '201':
+          description: Inspection stored
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Inspection'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  /collector/tasks/{task_id}/complete:
+    post:
+      tags: [Collector]
+      summary: Record collection outcome
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CompleteTask'}
+      responses:
+        '200':
+          description: Task outcome saved
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Task'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /collector/incidents:
+    post:
+      tags: [Collector]
+      summary: Report overflow or blocked access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateIncident'}
+      responses:
+        '201':
+          description: Incident created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Incident'}
+  /admin/zones:
+    get:
+      tags: [Admin]
+      summary: List zones
+      responses:
+        '200':
+          description: Zone list
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ZoneList'}
+    post:
+      tags: [Admin]
+      summary: Create zone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateZone'}
+      responses:
+        '201':
+          description: Zone created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Zone'}
+  /admin/zones/{zone_id}:
+    patch:
+      tags: [Admin]
+      summary: Update zone
+      parameters:
+        - $ref: '#/components/parameters/ZoneId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateZone'}
+      responses:
+        '200':
+          description: Updated zone
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Zone'}
+  /admin/bins:
+    get:
+      tags: [Admin]
+      summary: List/filter bins
+      parameters:
+        - name: zone_id
+          in: query
+          schema: {type: string, format: uuid}
+        - name: category_code
+          in: query
+          schema: {$ref: '#/components/schemas/CategoryCode'}
+        - name: status
+          in: query
+          schema: {$ref: '#/components/schemas/BinStatus'}
+      responses:
+        '200':
+          description: Bin list
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BinList'}
+    post:
+      tags: [Admin]
+      summary: Register bin and issue its QR credential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateBin'}
+      responses:
+        '201':
+          description: Bin and QR created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BinCreated'}
+  /admin/bins/{bin_id}:
+    get:
+      tags: [Admin]
+      summary: Get bin details
+      parameters:
+        - $ref: '#/components/parameters/BinId'
+      responses:
+        '200':
+          description: Bin details
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Bin'}
+    patch:
+      tags: [Admin]
+      summary: Update bin configuration
+      parameters:
+        - $ref: '#/components/parameters/BinId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateBin'}
+      responses:
+        '200':
+          description: Updated bin
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Bin'}
+  /admin/bins/{bin_id}/qr/rotate:
+    post:
+      tags: [Admin]
+      summary: Revoke old QR and issue replacement
+      parameters:
+        - $ref: '#/components/parameters/BinId'
+      responses:
+        '200':
+          description: New QR credential
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QrRotation'}
+  /admin/collectors:
+    get:
+      tags: [Admin]
+      summary: List collectors
+      responses:
+        '200':
+          description: Collector list
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CollectorList'}
+    post:
+      tags: [Admin]
+      summary: Register collector
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateCollector'}
+      responses:
+        '201':
+          description: Collector created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Collector'}
+  /admin/collectors/{collector_id}:
+    patch:
+      tags: [Admin]
+      summary: Update collector or zone assignments
+      parameters:
+        - $ref: '#/components/parameters/CollectorId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateCollector'}
+      responses:
+        '200':
+          description: Updated collector
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Collector'}
+  /admin/collection-tasks:
+    post:
+      tags: [Admin]
+      summary: Create and assign collection task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateTask'}
+      responses:
+        '201':
+          description: Task created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Task'}
+  /admin/analytics/monthly:
+    get:
+      tags: [Analytics]
+      summary: Read monthly analytics snapshot
+      parameters:
+        - name: period
+          in: query
+          required: true
+          schema: {type: string, pattern: '^\\d{4}-\\d{2}$', example: '2026-11'}
+      responses:
+        '200':
+          description: Monthly analytics
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MonthlyAnalytics'}
+  /admin/analytics/monthly/generate:
+    post:
+      tags: [Analytics]
+      summary: Generate monthly analytics and candidate recommendations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/GenerateMonthly'}
+      responses:
+        '201':
+          description: Monthly snapshot generated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MonthlyAnalytics'}
+  /admin/recommendations:
+    get:
+      tags: [Analytics]
+      summary: List recommendations for a reporting month
+      parameters:
+        - name: period
+          in: query
+          required: true
+          schema: {type: string, pattern: '^\\d{4}-\\d{2}$'}
+      responses:
+        '200':
+          description: Recommendation list
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RecommendationList'}
+  /admin/recommendations/{recommendation_id}/decision:
+    patch:
+      tags: [Analytics]
+      summary: Approve, reject or edit a recommendation
+      parameters:
+        - name: recommendation_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RecommendationDecision'}
+      responses:
+        '200':
+          description: Decision saved
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Recommendation'}
+  /admin/incidents:
+    post:
+      tags: [Admin]
+      summary: Admin reports operational incident
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateIncident'}
+      responses:
+        '201':
+          description: Incident created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Incident'}
+  /admin/routes/optimize:
+    post:
+      tags: [Routing]
+      summary: Generate route for pending collection tasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OptimizeRoute'}
+      responses:
+        '201':
+          description: Route generated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Route'}
+  /admin/routes/{route_id}/replan:
+    post:
+      tags: [Routing]
+      summary: Replan remaining stops after an incident
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReplanRoute'}
+      responses:
+        '200':
+          description: New route version
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Route'}
+  /admin/routes/{route_id}:
+    get:
+      tags: [Routing]
+      summary: Get route and ordered stops
+      parameters:
+        - name: route_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Route details
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Route'}
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    AnonymousSession:
+      type: apiKey
+      in: header
+      name: X-Anonymous-Session
+  parameters:
+    BinId:
+      name: bin_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    ZoneId:
+      name: zone_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    CollectorId:
+      name: collector_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  responses:
+    Unauthorized:
+      description: Authentication required or invalid token
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Forbidden:
+      description: Actor does not have permission
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+  schemas:
+    Health:
+      type: object
+      required: [status, service]
+      properties:
+        status: {type: string, enum: [ok]}
+        service: {type: string, example: greentrack-api}
+    Role:
+      type: string
+      enum: [CITIZEN, COLLECTOR, ADMIN]
+    CategoryCode:
+      type: string
+      enum: [WET, PLASTIC, PAPER, METAL_GLASS, OTHER]
+    BinStatus:
+      type: string
+      enum: [ACTIVE, INACTIVE, DAMAGED, RELOCATED, DECOMMISSIONED]
+    TaskStatus:
+      type: string
+      enum: [PENDING, ASSIGNED, IN_PROGRESS, COMPLETED, PARTIAL, FAILED, CANCELLED]
+    Contamination:
+      type: string
+      enum: [NONE, LOW, MEDIUM, HIGH]
+    IncidentType:
+      type: string
+      enum: [OVERFLOW, BLOCKED_ROAD, BLOCKED_ACCESS, OTHER]
+    Coordinate:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude: {type: number, minimum: -90, maximum: 90}
+        longitude: {type: number, minimum: -180, maximum: 180}
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        details: {type: object, additionalProperties: true}
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: {type: string, format: email}
+        password: {type: string, format: password}
+    UserSummary:
+      type: object
+      required: [id, role, display_name]
+      properties:
+        id: {type: string, format: uuid}
+        role: {$ref: '#/components/schemas/Role'}
+        display_name: {type: string}
+    AuthResponse:
+      type: object
+      required: [access_token, token_type, user]
+      properties:
+        access_token: {type: string}
+        token_type: {type: string, enum: [Bearer]}
+        expires_at: {type: string, format: date-time}
+        user: {$ref: '#/components/schemas/UserSummary'}
+    Me:
+      type: object
+      required: [user]
+      properties:
+        user: {$ref: '#/components/schemas/UserSummary'}
+    AnonymousSession:
+      type: object
+      required: [session_token, expires_at]
+      properties:
+        session_token: {type: string}
+        expires_at: {type: string, format: date-time}
+    ResolveBinRequest:
+      type: object
+      required: [qr_token]
+      properties:
+        qr_token: {type: string, minLength: 20}
+    PublicBin:
+      type: object
+      required: [bin_id, bin_code, category_code, zone_name, status]
+      properties:
+        bin_id: {type: string, format: uuid}
+        bin_code: {type: string}
+        category_code: {$ref: '#/components/schemas/CategoryCode'}
+        zone_name: {type: string}
+        status: {$ref: '#/components/schemas/BinStatus'}
+        disposal_guidance: {type: string}
+    CreateDisposalEvent:
+      type: object
+      required: [qr_token]
+      properties:
+        qr_token: {type: string, minLength: 20}
+        declared_category_code:
+          allOf:
+            - {$ref: '#/components/schemas/CategoryCode'}
+          description: Optional citizen declaration; not verified physical content.
+    DisposalEvent:
+      type: object
+      required: [id, bin_id, bin_code, accepted_at, event_type]
+      properties:
+        id: {type: string, format: uuid}
+        bin_id: {type: string, format: uuid}
+        bin_code: {type: string}
+        accepted_at: {type: string, format: date-time}
+        event_type: {type: string, enum: [DISPOSAL_INTERACTION]}
+        declared_category_code:
+          allOf:
+            - {$ref: '#/components/schemas/CategoryCode'}
+          nullable: true
+    DisposalEventList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/DisposalEvent'}
+    CooldownError:
+      type: object
+      required: [code, message, retry_after_seconds]
+      properties:
+        code: {type: string, enum: [COOLDOWN_ACTIVE]}
+        message: {type: string}
+        retry_after_seconds: {type: integer, minimum: 1}
+    CreateInspection:
+      type: object
+      required: [fill_percent, overflow, observed_category_code, contamination_level, source]
+      properties:
+        fill_percent: {type: number, minimum: 0, maximum: 100}
+        overflow: {type: boolean}
+        observed_category_code: {$ref: '#/components/schemas/CategoryCode'}
+        contamination_level: {$ref: '#/components/schemas/Contamination'}
+        estimated_mixed_percent: {type: number, minimum: 0, maximum: 100, nullable: true}
+        notes: {type: string, maxLength: 1000}
+        photo_url: {type: string, format: uri, nullable: true}
+        source: {type: string, enum: [REAL, SIMULATED]}
+    Inspection:
+      type: object
+      required: [id, bin_id, collector_id, fill_percent, overflow, contamination_level, inspected_at, source]
+      properties:
+        id: {type: string, format: uuid}
+        bin_id: {type: string, format: uuid}
+        collector_id: {type: string, format: uuid}
+        fill_percent: {type: number, minimum: 0, maximum: 100}
+        overflow: {type: boolean}
+        observed_category_code: {$ref: '#/components/schemas/CategoryCode'}
+        contamination_level: {$ref: '#/components/schemas/Contamination'}
+        estimated_mixed_percent: {type: number, nullable: true}
+        inspected_at: {type: string, format: date-time}
+        source: {type: string, enum: [REAL, SIMULATED]}
+    CompleteTask:
+      type: object
+      required: [outcome]
+      properties:
+        outcome: {type: string, enum: [COMPLETED, PARTIAL, FAILED]}
+        notes: {type: string, maxLength: 1000}
+        post_collection_fill_percent: {type: number, minimum: 0, maximum: 100, nullable: true}
+        exception_reason: {type: string, maxLength: 500, nullable: true}
+    Task:
+      type: object
+      required: [id, bin_id, bin_code, priority, status]
+      properties:
+        id: {type: string, format: uuid}
+        bin_id: {type: string, format: uuid}
+        bin_code: {type: string}
+        priority: {type: string, enum: [LOW, NORMAL, HIGH, CRITICAL]}
+        status: {$ref: '#/components/schemas/TaskStatus'}
+        due_at: {type: string, format: date-time, nullable: true}
+    TaskList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Task'}
+    CreateZone:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 2, maxLength: 100}
+        description: {type: string, maxLength: 500}
+        center: {$ref: '#/components/schemas/Coordinate'}
+    UpdateZone:
+      type: object
+      properties:
+        name: {type: string, minLength: 2, maxLength: 100}
+        description: {type: string, maxLength: 500}
+        status: {type: string, enum: [ACTIVE, INACTIVE]}
+    Zone:
+      type: object
+      required: [id, name, status]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        description: {type: string}
+        status: {type: string, enum: [ACTIVE, INACTIVE]}
+        center: {$ref: '#/components/schemas/Coordinate'}
+    ZoneList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Zone'}
+    CreateBin:
+      type: object
+      required: [bin_code, zone_id, category_code, capacity_litres, location]
+      properties:
+        bin_code: {type: string, minLength: 3, maxLength: 40}
+        zone_id: {type: string, format: uuid}
+        category_code: {$ref: '#/components/schemas/CategoryCode'}
+        capacity_litres: {type: number, exclusiveMinimum: 0}
+        location: {$ref: '#/components/schemas/Coordinate'}
+    UpdateBin:
+      type: object
+      properties:
+        zone_id: {type: string, format: uuid}
+        category_code: {$ref: '#/components/schemas/CategoryCode'}
+        capacity_litres: {type: number, exclusiveMinimum: 0}
+        location: {$ref: '#/components/schemas/Coordinate'}
+        status: {$ref: '#/components/schemas/BinStatus'}
+    Bin:
+      type: object
+      required: [id, bin_code, zone_id, category_code, capacity_litres, location, status]
+      properties:
+        id: {type: string, format: uuid}
+        bin_code: {type: string}
+        zone_id: {type: string, format: uuid}
+        category_code: {$ref: '#/components/schemas/CategoryCode'}
+        capacity_litres: {type: number}
+        location: {$ref: '#/components/schemas/Coordinate'}
+        status: {$ref: '#/components/schemas/BinStatus'}
+        latest_observed_fill_percent: {type: number, minimum: 0, maximum: 100, nullable: true}
+        latest_inspected_at: {type: string, format: date-time, nullable: true}
+    BinList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Bin'}
+    BinCreated:
+      type: object
+      required: [bin, qr_token, qr_payload]
+      properties:
+        bin: {$ref: '#/components/schemas/Bin'}
+        qr_token: {type: string, description: Return once for QR printing; persist only its hash.}
+        qr_payload: {type: string, description: Opaque URL to encode into QR.}
+    QrRotation:
+      type: object
+      required: [bin_id, qr_token, qr_payload, rotated_at]
+      properties:
+        bin_id: {type: string, format: uuid}
+        qr_token: {type: string}
+        qr_payload: {type: string}
+        rotated_at: {type: string, format: date-time}
+    CreateCollector:
+      type: object
+      required: [display_name, email]
+      properties:
+        display_name: {type: string, minLength: 2}
+        email: {type: string, format: email}
+        zone_ids:
+          type: array
+          items: {type: string, format: uuid}
+    UpdateCollector:
+      type: object
+      properties:
+        status: {type: string, enum: [ACTIVE, INACTIVE]}
+        zone_ids:
+          type: array
+          items: {type: string, format: uuid}
+    Collector:
+      type: object
+      required: [id, display_name, email, status]
+      properties:
+        id: {type: string, format: uuid}
+        display_name: {type: string}
+        email: {type: string, format: email}
+        status: {type: string, enum: [ACTIVE, INACTIVE]}
+        zone_ids:
+          type: array
+          items: {type: string, format: uuid}
+    CollectorList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Collector'}
+    CreateTask:
+      type: object
+      required: [bin_id, priority]
+      properties:
+        bin_id: {type: string, format: uuid}
+        assigned_collector_id: {type: string, format: uuid, nullable: true}
+        priority: {type: string, enum: [LOW, NORMAL, HIGH, CRITICAL]}
+        due_at: {type: string, format: date-time, nullable: true}
+        reason: {type: string, maxLength: 500}
+    GenerateMonthly:
+      type: object
+      required: [period]
+      properties:
+        period: {type: string, pattern: '^\\d{4}-\\d{2}$', example: '2026-11'}
+        include_simulated: {type: boolean, default: false}
+    Metric:
+      type: object
+      required: [name, value, sample_count]
+      properties:
+        name: {type: string}
+        value: {type: number}
+        unit: {type: string}
+        sample_count: {type: integer, minimum: 0}
+        coverage_percent: {type: number, minimum: 0, maximum: 100, nullable: true}
+    MonthlyAnalytics:
+      type: object
+      required: [period, generated_at, metrics, zone_summaries]
+      properties:
+        period: {type: string, pattern: '^\\d{4}-\\d{2}$'}
+        generated_at: {type: string, format: date-time}
+        metrics:
+          type: array
+          items: {$ref: '#/components/schemas/Metric'}
+        zone_summaries:
+          type: array
+          items:
+            type: object
+            required: [zone_id, zone_name, hotspot_score, data_coverage_percent]
+            properties:
+              zone_id: {type: string, format: uuid}
+              zone_name: {type: string}
+              hotspot_score: {type: number, minimum: 0, maximum: 100}
+              data_coverage_percent: {type: number, minimum: 0, maximum: 100}
+              observed_avg_fill_percent: {type: number, minimum: 0, maximum: 100, nullable: true}
+              overflow_count: {type: integer, minimum: 0}
+    RecommendationDecision:
+      type: object
+      required: [decision]
+      properties:
+        decision: {type: string, enum: [APPROVE, REJECT, EDIT]}
+        admin_notes: {type: string, maxLength: 1000}
+        edited_quantity: {type: integer, minimum: 1, nullable: true}
+    Recommendation:
+      type: object
+      required: [id, period, action_type, rationale, status]
+      properties:
+        id: {type: string, format: uuid}
+        period: {type: string}
+        zone_id: {type: string, format: uuid, nullable: true}
+        bin_id: {type: string, format: uuid, nullable: true}
+        action_type:
+          type: string
+          enum: [ADD_BIN, RELOCATE_BIN, CHANGE_CATEGORY_MIX, INCREASE_COLLECTION_FREQUENCY, INCREASE_INSPECTION_FREQUENCY, SEGREGATION_AWARENESS]
+        rationale: {type: string}
+        evidence_summary: {type: string}
+        confidence: {type: string, enum: [LOW, MEDIUM, HIGH]}
+        status: {type: string, enum: [PENDING, APPROVED, REJECTED, EDITED, IMPLEMENTED]}
+    RecommendationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/Recommendation'}
+    CreateIncident:
+      type: object
+      required: [type, severity, description]
+      properties:
+        type: {$ref: '#/components/schemas/IncidentType'}
+        bin_id: {type: string, format: uuid, nullable: true}
+        road_edge_id: {type: string, nullable: true}
+        location: {$ref: '#/components/schemas/Coordinate'}
+        severity: {type: string, enum: [LOW, MEDIUM, HIGH, CRITICAL]}
+        description: {type: string, maxLength: 1000}
+    Incident:
+      type: object
+      required: [id, type, status, reported_at]
+      properties:
+        id: {type: string, format: uuid}
+        type: {$ref: '#/components/schemas/IncidentType'}
+        status: {type: string, enum: [OPEN, ACKNOWLEDGED, RESOLVED]}
+        reported_at: {type: string, format: date-time}
+    OptimizeRoute:
+      type: object
+      required: [task_ids, depot]
+      properties:
+        task_ids:
+          type: array
+          minItems: 1
+          items: {type: string, format: uuid}
+        depot: {$ref: '#/components/schemas/Coordinate'}
+        vehicle_id: {type: string, format: uuid, nullable: true}
+    ReplanRoute:
+      type: object
+      required: [incident_id]
+      properties:
+        incident_id: {type: string, format: uuid}
+    RouteStop:
+      type: object
+      required: [sequence, bin_id, bin_code, status]
+      properties:
+        sequence: {type: integer, minimum: 1}
+        bin_id: {type: string, format: uuid}
+        bin_code: {type: string}
+        status: {type: string, enum: [PENDING, COMPLETED, SKIPPED, UNREACHABLE]}
+    Route:
+      type: object
+      required: [id, version, status, stops]
+      properties:
+        id: {type: string, format: uuid}
+        version: {type: integer, minimum: 1}
+        status: {type: string, enum: [DRAFT, ACTIVE, COMPLETED, FAILED]}
+        distance_estimate_km: {type: number, nullable: true}
+        duration_estimate_minutes: {type: number, nullable: true}
+        estimates_source: {type: string, enum: [OSRM, SIMULATED, UNAVAILABLE]}
+        affected_bin_ids:
+          type: array
+          items: {type: string, format: uuid}
+        stops:
+          type: array
+          items: {$ref: '#/components/schemas/RouteStop'}

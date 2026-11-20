@@ -1,0 +1,6 @@
+{
+  "name": "GreenTrack",
+  "description": "Civic waste infrastructure, citizen participation, collector inspections, monthly hotspot analytics, and adaptive route operations.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
